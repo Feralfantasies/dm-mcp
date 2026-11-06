@@ -26,7 +26,16 @@ jobs:
   # advisory and the reason the warning is acceptable if one comes up.
   security-audit:
     name: Security Audit
-    runs-on: arc-runner-dm-mcp
+    # `firethorn` is the org-wide ARC runner set (kubernetes/github-runner/
+    # feralfantasies-org-values.yaml: runnerScaleSetName "firethorn",
+    # githubConfigUrl = the feralfantasies ORG, so any repo in the org can use
+    # it). The old `arc-runner-dm-mcp` label belonged to a per-repo scale set
+    # that is not deployed — verified 2026-11-06: `kubectl get
+    # autoscalingrunnerset -A` returns exactly one set, arc-runners/firethorn,
+    # and `gh api orgs/feralfantasies/actions/runners` returns an empty list.
+    # Nothing advertised the old label, so these jobs could never be picked up.
+    # Same label kubernetes, larderly, ollama_monitor and price-action use.
+    runs-on: firethorn
 
     steps:
       - name: Install required packages
