@@ -71,6 +71,8 @@ jobs:
 
       - name: Install cargo-audit
         # Skip the compile if the cached binary is already present on PATH.
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
+
       - name: Fail over to plain rustc if the sccache backend is unhealthy
         # The firethorn runner pod injects RUSTC_WRAPPER=sccache into every job,
         # and sccache FAILS THE BUILD by default when it cannot reach its
@@ -95,7 +97,6 @@ jobs:
             tail -n 6 /tmp/sccache-probe.log || true
             echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
           fi
-        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
 
       - name: Run cargo audit
         run: cargo audit
