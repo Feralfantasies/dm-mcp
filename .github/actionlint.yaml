@@ -3,7 +3,12 @@
 #
 # `arc-runner-dm-mcp` is a self-hosted Actions Runner Controller label for this
 # project's Kubernetes runner pods.
+#
+# `firethorn` is the org-wide ARC runner set (kubernetes/github-runner/
+# feralfantasies-org-values.yaml: runnerScaleSetName "firethorn", org-level
+# githubConfigUrl) that every workflow job now runs on.
 
 self-hosted-runner:
   labels:
     - arc-runner-dm-mcp
+    - firethorn

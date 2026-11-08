@@ -10,6 +10,8 @@ on:
       - main
 
 env:
+  # Graceful failover: an unreachable sccache backend must never fail a build.
+  SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -25,8 +27,21 @@ jobs:
   # Ignores are intentionally empty here — add them with a comment citing the
   # advisory and the reason the warning is acceptable if one comes up.
   security-audit:
+    # Explicit ceiling: with a cold cache these jobs run long (observed up to
+    # 2h01m for clippy while sccache was failing); the 360m GitHub default is
+    # too loose to catch a hang.
+    timeout-minutes: 90
     name: Security Audit
-    runs-on: arc-runner-dm-mcp
+    # `firethorn` is the org-wide ARC runner set (kubernetes/github-runner/
+    # feralfantasies-org-values.yaml: runnerScaleSetName "firethorn",
+    # githubConfigUrl = the feralfantasies ORG, so any repo in the org can use
+    # it). The old `arc-runner-dm-mcp` label belonged to a per-repo scale set
+    # that is not deployed — verified 2026-11-06: `kubectl get
+    # autoscalingrunnerset -A` returns exactly one set, arc-runners/firethorn,
+    # and `gh api orgs/feralfantasies/actions/runners` returns an empty list.
+    # Nothing advertised the old label, so these jobs could never be picked up.
+    # Same label kubernetes, larderly, ollama_monitor and price-action use.
+    runs-on: firethorn
 
     steps:
       - name: Install required packages
@@ -54,9 +69,41 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-audit-
 
+      - name: Fail over to plain rustc if the sccache backend is unhealthy
+        # The firethorn runner pod injects RUSTC_WRAPPER=sccache into every job,
+        # and sccache FAILS THE BUILD by default when it cannot reach its
+        # server. Observed here 2026-11-06:
+        #   sccache: error: Timed out waiting for server startup.
+        #            Maybe the remote service is unreachable?
+        #   error: process didn't exit successfully: `sccache .../rustc -vV`
+        # Probe once; on failure clear RUSTC_WRAPPER via $GITHUB_ENV so later
+        # steps compile uncached instead of failing the job. sccache's own
+        # startup wait is not configurable (upstream server.rs exposes only
+        # IDLE_TIMEOUT, MAX_FRAME_LENGTH, NO_CACHE, RECACHE, SERVER_PORT and
+        # STARTUP_NOTIFY), so failing over is the only available lever.
+        # This step MUST stay before the first compiling step: on 2026-11-07
+        # (PR #59) `cargo install cargo-audit` died on exactly this timeout
+        # while the probe was still queued behind it. A probe alone is not
+        # sufficient (on the same day it passed 2 s before `cargo clippy`
+        # hit the same timeout in ci.yaml), so the install below also runs
+        # via .github/scripts/sccache-fallback.sh, which retries once,
+        # uncached, after a sccache error.
+        run: |
+          if [ -z "${RUSTC_WRAPPER:-}" ]; then
+            echo "RUSTC_WRAPPER not set - nothing to disable"; exit 0
+          fi
+          if timeout 240 "$RUSTC_WRAPPER" --show-stats > /tmp/sccache-probe.log 2>&1; then
+            echo "sccache healthy - keeping the compile cache"
+            tail -n 4 /tmp/sccache-probe.log || true
+          else
+            echo "::warning::sccache backend unreachable - disabling it for this job"
+            tail -n 6 /tmp/sccache-probe.log || true
+            echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          fi
+
       - name: Install cargo-audit
         # Skip the compile if the cached binary is already present on PATH.
-        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
+        run: command -v cargo-audit >/dev/null || bash .github/scripts/sccache-fallback.sh cargo install cargo-audit --locked
 
       - name: Run cargo audit
         run: cargo audit
