@@ -100,10 +100,15 @@ jobs:
             tail -n 6 /tmp/sccache-probe.log || true
             echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
           fi
+          # A probe alone is not sufficient: on 2026-11-07 (PR #59) this probe
+          # passed 2 s before `cargo clippy` hit the same startup timeout. The
+          # compiling step below therefore also runs via
+          # .github/scripts/sccache-fallback.sh, which retries once, uncached,
+          # after a sccache error.
       - uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
 
       - name: cargo clippy — deny all warnings
-        run: cargo clippy --all-targets -- -D warnings
+        run: bash .github/scripts/sccache-fallback.sh cargo clippy --all-targets -- -D warnings
 
   # ── 3. Tests ──────────────────────────────────────────────────────────────
   # Unit tests + integration tests. tests/*.rs spawn the compiled binary and
@@ -155,13 +160,18 @@ jobs:
             tail -n 6 /tmp/sccache-probe.log || true
             echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
           fi
+          # A probe alone is not sufficient: on 2026-11-07 (PR #59) this probe
+          # passed 2 s before `cargo clippy` hit the same startup timeout. The
+          # compiling steps below therefore also run via
+          # .github/scripts/sccache-fallback.sh, which retries once, uncached,
+          # after a sccache error.
       - uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
 
       - name: cargo build (release — verifies the release profile compiles clean)
-        run: cargo build --release
+        run: bash .github/scripts/sccache-fallback.sh cargo build --release
 
       - name: cargo test
-        run: cargo test
+        run: bash .github/scripts/sccache-fallback.sh cargo test
 
   # ── 4. No-OpenSSL audit ───────────────────────────────────────────────────
   # Project rule: all TLS must go through rustls. OpenSSL breaks the `scratch`
@@ -212,6 +222,9 @@ jobs:
             tail -n 6 /tmp/sccache-probe.log || true
             echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
           fi
+          # (This job only runs `cargo tree` — no compilation — so the probe is
+          # informational here; the sccache-fallback retry applies to the
+          # compiling jobs above.)
       - uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
 
       - name: Verify openssl is not in the dependency tree
